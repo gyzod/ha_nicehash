@@ -15,6 +15,8 @@ from custom_components.nicehash.const import (
     RIGS_OBJ,
 )
 
+PLACEHOLDER_RIG_NAMES = {"__DEFAULT__", "- UNMANAGED -", "UNMANAGED"}
+
 _LOGGER = getLogger(__name__)
 
 
@@ -49,3 +51,61 @@ class NiceHashSensorDataUpdateCoordinator(DataUpdateCoordinator):
                 return {RIGS_OBJ: rigs, ACCOUNT_OBJ: account}
         except Exception as err:
             raise UpdateFailed(f"Error communicating with API: {err}") from err
+
+
+def resolve_rig_name(rig: Dict[str, Any] | None) -> str | None:
+    """Return the most meaningful name for a rig."""
+
+    if not rig:
+        return None
+
+    placeholder_tokens = {token.upper() for token in PLACEHOLDER_RIG_NAMES}
+
+    def _normalize(value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        name = value.strip()
+        if not name:
+            return None
+        if name.upper() in placeholder_tokens:
+            return None
+        return name
+
+    keys = (
+        "name",
+        "displayName",
+        "rigDisplayName",
+        "label",
+        "worker",
+        "rigName",
+        "groupName",
+    )
+
+    metadata = rig.get("metadata") or {}
+    group = rig.get("group") or {}
+    v4 = rig.get("v4") or {}
+    mmv = v4.get("mmv") or {}
+
+    candidates = [rig.get(key) for key in keys]
+    candidates.extend(metadata.get(key) for key in keys)
+    candidates.extend(group.get(key) for key in keys if isinstance(group, dict))
+    candidates.append(rig.get("groupName"))
+
+    candidates.append(mmv.get("workerName"))
+
+    for os_value in v4.get("osv") or []:
+        candidates.append(os_value.get("value"))
+
+    for device in v4.get("devices") or []:
+        dsv = device.get("dsv") or {}
+        candidates.append(dsv.get("name"))
+
+    for device in rig.get("devices", []):
+        candidates.append(device.get("name"))
+
+    for candidate in candidates:
+        normalized = _normalize(candidate)
+        if normalized:
+            return normalized
+
+    return rig.get("rigId")

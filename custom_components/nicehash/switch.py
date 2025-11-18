@@ -3,9 +3,9 @@
 import asyncio
 import logging
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.helpers.entity import ToggleEntity
-from homeassistant.core import callback
-from homeassistant.helpers import config_validation as cv, entity_platform, service
+from homeassistant.components.switch import SwitchEntity
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import config_validation as cv, entity_platform
 import voluptuous as vol
 
 from homeassistant.exceptions import HomeAssistantError
@@ -14,10 +14,12 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
 )
-from homeassistant.helpers.typing import HomeAssistantType
 
 from custom_components.nicehash.nicehash import NiceHashPrivateAPI
-from custom_components.nicehash.common import NiceHashSensorDataUpdateCoordinator
+from custom_components.nicehash.common import (
+    NiceHashSensorDataUpdateCoordinator,
+    resolve_rig_name,
+)
 from custom_components.nicehash.const import (
     API,
     DOMAIN,
@@ -34,7 +36,7 @@ PLATFORM = "switch"
 
 
 async def async_setup_entry(
-    hass: HomeAssistantType, config_entry: ConfigEntry, async_add_entities
+    hass: HomeAssistant, config_entry: ConfigEntry, async_add_entities
 ) -> None:
     """Set up the NiceHash sensor using config entry."""
     coordinator: NiceHashSensorDataUpdateCoordinator = hass.data[DOMAIN][
@@ -55,7 +57,8 @@ async def async_setup_entry(
 
         new_dev = []
 
-        for rig in coordinator.data.get(RIGS_OBJ).get("miningRigs"):
+        rigs_data = coordinator.data.get(RIGS_OBJ) or {}
+        for rig in rigs_data.get("miningRigs", []):
             rig_id = rig.get("rigId")
             rig_switch = NiceHashRigSwitch(
                 hass.data[DOMAIN][config_entry.entry_id][API],
@@ -67,7 +70,7 @@ async def async_setup_entry(
                 new_dev.append(rig_switch)
                 _update_entities.dev.append(rig_switch.unique_id)
 
-            for dev in rig.get("devices"):
+            for dev in rig.get("devices", []):
                 device_id = dev.get("id")
                 device_switch = NiceHashDeviceSwitch(
                     hass.data[DOMAIN][config_entry.entry_id][API],
@@ -87,7 +90,7 @@ async def async_setup_entry(
     await coordinator.async_refresh()
 
 
-class NiceHashRigSwitch(CoordinatorEntity, ToggleEntity):
+class NiceHashRigSwitch(CoordinatorEntity, SwitchEntity):
     """Class describing a rig switch"""
 
     DOMAIN = PLATFORM
@@ -114,19 +117,17 @@ class NiceHashRigSwitch(CoordinatorEntity, ToggleEntity):
 
     def get_rig(self):
         """Return the rig object."""
-        rig = None
-        for rig_entry in self.coordinator.data[self._data_type].get("miningRigs", []):
+        rigs_container = self.coordinator.data.get(self._data_type) or {}
+        for rig_entry in rigs_container.get("miningRigs", []):
             if rig_entry.get("rigId") == self._rig_id:
-                rig = rig_entry
-        return rig
+                return rig_entry
+        return None
 
     @property
     def name(self):
         rig = self.get_rig()
-        if rig is not None:
-            name = f"NH - {rig.get('name')} - Power"
-            return name
-        return None
+        rig_name = resolve_rig_name(rig) or (rig.get("rigId") if rig else self._rig_id)
+        return f"NH - {rig_name} - Power"
 
     @property
     def unique_id(self):
@@ -137,12 +138,13 @@ class NiceHashRigSwitch(CoordinatorEntity, ToggleEntity):
     def device_info(self):
         """Information about this entity/device."""
         rig = self.get_rig()
+        rig_name = resolve_rig_name(rig)
         return {
             "identifiers": {(DOMAIN, self._rig_id)},
             # If desired, the name for the device could be different to the entity
-            "name": rig.get("name"),
-            "sw_version": rig.get("softwareVersions"),
-            "model": rig.get("softwareVersions"),
+            "name": rig_name,
+            "sw_version": rig.get("softwareVersions") if rig else None,
+            "model": rig.get("softwareVersions") if rig else None,
             "manufacturer": "NiceHash",
         }
 
@@ -179,7 +181,7 @@ class NiceHashRigSwitch(CoordinatorEntity, ToggleEntity):
         raise HomeAssistantError("Rig PowerMode service not supported")
 
 
-class NiceHashDeviceSwitch(CoordinatorEntity, ToggleEntity):
+class NiceHashDeviceSwitch(CoordinatorEntity, SwitchEntity):
     """Class describing a device switch"""
 
     DOMAIN = PLATFORM
@@ -207,18 +209,19 @@ class NiceHashDeviceSwitch(CoordinatorEntity, ToggleEntity):
 
     def get_rig(self):
         """Return the rig object."""
-        rig = None
-        for rig_entry in self.coordinator.data[self._data_type].get("miningRigs", []):
+        rigs_container = self.coordinator.data.get(self._data_type) or {}
+        for rig_entry in rigs_container.get("miningRigs", []):
             if rig_entry.get("rigId") == self._rig_id:
-                rig = rig_entry
-        return rig
+                return rig_entry
+        return None
 
     def get_device(self):
         """Return device object."""
 
-        for rig_entry in self.coordinator.data[self._data_type].get("miningRigs", []):
+        rigs_container = self.coordinator.data.get(self._data_type) or {}
+        for rig_entry in rigs_container.get("miningRigs", []):
             if rig_entry.get("rigId") == self._rig_id:
-                for device_entry in rig_entry.get("devices"):
+                for device_entry in rig_entry.get("devices", []):
                     if device_entry.get("id") == self._device_id:
                         return device_entry
 
@@ -227,7 +230,9 @@ class NiceHashDeviceSwitch(CoordinatorEntity, ToggleEntity):
         rig = self.get_rig()
         device = self.get_device()
         if rig is not None and device is not None:
-            name = f"NH - {rig.get('name')} - {device.get('name')} - Power"
+            rig_name = resolve_rig_name(rig) or rig.get("rigId")
+            dev_name = device.get("name") or device.get("id")
+            name = f"NH - {rig_name} - {dev_name} - Power"
             return name
         return None
 
@@ -241,11 +246,12 @@ class NiceHashDeviceSwitch(CoordinatorEntity, ToggleEntity):
         """Information about this entity/device."""
         rig = self.get_rig()
         device = self.get_device()
+        rig_name = resolve_rig_name(rig)
         return {
             "identifiers": {(DOMAIN, self._rig_id)},
             # If desired, the name for the device could be different to the entity
-            "rig_name": rig.get("name"),
-            "device_name": device.get("name"),
+            "rig_name": rig_name,
+            "device_name": (device.get("name") or device.get("id")) if device else None,
             "manufacturer": "NiceHash",
         }
 
@@ -254,6 +260,9 @@ class NiceHashDeviceSwitch(CoordinatorEntity, ToggleEntity):
         """Return the state attributes."""
         rig = self.get_rig()
         device = self.get_device()
+
+        if rig is None or device is None:
+            return {}
 
         if "nhqm" in device:
             # NiceHash QuickMiner
@@ -268,8 +277,8 @@ class NiceHashDeviceSwitch(CoordinatorEntity, ToggleEntity):
             supported_power_modes = ["HIGH", "MEDIUM", "LOW"]
 
         return {
-            "rig_name": rig.get("name"),
-            "device_name": device.get("name"),
+            "rig_name": resolve_rig_name(rig) or rig.get("rigId"),
+            "device_name": device.get("name") or device.get("id"),
             "temperature": self.normalize_value(device.get("temperature")),
             "load": self.normalize_value(device.get("load")),
             "fan_speed": device.get("revolutionsPerMinute"),
@@ -375,6 +384,8 @@ class NiceHashDeviceSwitch(CoordinatorEntity, ToggleEntity):
 
     @staticmethod
     def normalize_value(value: int) -> int:
-        if 0 >= value <= 500:
+        if value is None:
+            return None
+        if 0 <= value <= 500:
             return value
         return value % 65536

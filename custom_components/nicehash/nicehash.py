@@ -1,11 +1,13 @@
 """ Implementation of the NiceHash API """
 
 from datetime import datetime
+from hashlib import sha256
 from time import mktime
-import uuid
+from urllib.parse import urlencode
 import hmac
 import json
-from hashlib import sha256
+import uuid
+
 import aiohttp
 
 class NiceHashPrivateAPI:
@@ -99,7 +101,15 @@ class NiceHashPrivateAPI:
 
     async def get_rigs_data(self):
         """Return the rigs object"""
-        return await self.request("GET", "/main/api/v2/mining/rigs2")
+
+        params = {"page": 0, "size": 100, "sort": "NAME"}
+        query = urlencode(params)
+        return await self.request(
+            "GET",
+            "/main/api/v2/mining/rigs",
+            query,
+            params,
+        )
 
     async def get_account_data(self, fiat="USD"):
         """Return the account object"""

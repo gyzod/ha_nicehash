@@ -1,10 +1,10 @@
 {
     "domain": "nicehash",
     "name": "NiceHash",
-    "documentation": "https://github.com/RomRider/ha_nicehash",
+    "documentation": "https://github.com/gyzod/ha_nicehash",
     "dependencies": [],
-    "codeowners": ["@RomRider"],
+    "codeowners": ["@gyzod"],
     "requirements": [],
     "config_flow": true,
-    "version": "0.0.5"
+    "version": "0.1.0"
   }

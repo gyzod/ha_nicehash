@@ -9,7 +9,7 @@ CONFIG_FIAT = "fiat"
 CONFIG_UPDATE_INTERVAL = "update_interval"
 
 DOMAIN = "nicehash"
-PLATFORMS = ["sensor"]
+PLATFORMS = ["sensor", "switch"]
 DEFAULT_SCAN_INTERVAL_MINUTES = 1
 SWITCH_ASYNC_UPDATE_AFTER_SECONDS = 20
 

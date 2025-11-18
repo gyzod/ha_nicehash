@@ -1,10 +1,10 @@
-# NiceHash custom integration by @RomRider
+# NiceHash custom integration for Home Assistant
 
-This is a custom integration for [NiceHash](https://www.nicehash.com).
+This is a custom integration for [NiceHash](https://www.nicehash.com), originally created by @RomRider and now maintained by @gyzod.
 
 ![logo](docs/logo.png)
 
-It will enable you to collect:
+It will enable you to collect and automate:
 * Your accounts statistics
   * balance
   * profitability
@@ -15,16 +15,29 @@ It will enable you to collect:
   * Rejected Hash rate
   * Profitability
   * Local Profitability
+* Rig and device switches so you can enable/disable whole rigs or individual devices directly from Home Assistant
 
 All the values which represent a BTC amount generate 2 sensors:
 * one in BTC
 * one in the currency you selected during the setup (conversion rate if provided by NiceHash)
 
+## Requirements
+
+* Home Assistant **2025.11.0** or newer
+* A NiceHash API key limited to mining read/write and organization read scope (see instructions below)
+
+## What's new in 0.1.0
+
+* Integration metadata now points to `github.com/gyzod/ha_nicehash` and the version has been bumped to `0.1.0`.
+* Switch entities are registered alongside sensors by default, ensuring rig and device power toggles are always available.
+* Rig/device names fall back to smartly resolved identifiers so placeholders such as `UNMANAGED` are no longer shown in the UI.
+* The mining rigs API call now uses the paginated `/main/api/v2/mining/rigs` endpoint for better compatibility with large farms.
+
 ## Installation
 
 ### HACS (prefered)
 
-1. Add this repository to HACS as an integration: https://github.com/RomRider/ha_nicehash
+1. Add this repository to HACS as an integration: https://github.com/gyzod/ha_nicehash
 1. Install the integration
 1. Restart your instance
 
@@ -72,7 +85,7 @@ Once that is done, head over to Home-Assistant and add the integration from the 
 
 ## Adding to your interface
 
-It is best to use [apexcharts-card](https://github.com/RomRider/apexcharts-card) (more flexibility) or [mini-graph-card](https://github.com/kalkih/mini-graph-card) (less flexibility) to display the data from those sensors.
+It is best to use [apexcharts-card](https://github.com/RomRider/apexcharts-card) (more flexibility) or [mini-graph-card](https://github.com/kalkih/mini-graph-card) (less flexibility) to display the data from those sensors, and Home Assistant's built-in switch cards to control rigs or devices.
 
 
 

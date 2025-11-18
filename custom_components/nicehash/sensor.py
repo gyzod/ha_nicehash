@@ -4,15 +4,17 @@ import logging
 from datetime import datetime
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity import Entity
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
 
 # from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
 )
-from homeassistant.helpers.typing import HomeAssistantType
 
-from custom_components.nicehash.common import NiceHashSensorDataUpdateCoordinator
+from custom_components.nicehash.common import (
+    NiceHashSensorDataUpdateCoordinator,
+    resolve_rig_name,
+)
 from custom_components.nicehash.const import (
     ACCOUNT_OBJ,
     ALGOS_UNITS,
@@ -42,7 +44,7 @@ RIG_STATS_ATTRIBUTES = [{"speedAccepted": {}}, {"speedRejectedTotal": {}}]
 
 
 async def async_setup_entry(
-    hass: HomeAssistantType, config_entry: ConfigEntry, async_add_entities
+    hass: HomeAssistant, config_entry: ConfigEntry, async_add_entities
 ) -> None:
     """Set up the NiceHash sensor using config entry."""
     coordinator: NiceHashSensorDataUpdateCoordinator = hass.data[DOMAIN][
@@ -81,7 +83,8 @@ async def async_setup_entry(
                     new_dev.append(sensor)
                     _update_entities.dev.append(sensor.unique_id)
 
-        for rig in coordinator.data.get(RIGS_OBJ).get("miningRigs"):
+        rigs_data = coordinator.data.get(RIGS_OBJ) or {}
+        for rig in rigs_data.get("miningRigs", []):
             rig_id = rig.get("rigId")
 
             for data_type in RIG_DATA_ATTRIBUTES:
@@ -229,22 +232,23 @@ class NiceHashSensor(CoordinatorEntity, Entity):
 
     def get_rig(self):
         """Return the rig object."""
-        rig = None
-        for rig_entry in self.coordinator.data[self._data_type].get("miningRigs", []):
+        rigs_container = self.coordinator.data.get(self._data_type) or {}
+        for rig_entry in rigs_container.get("miningRigs", []):
             if rig_entry.get("rigId") == self._rig_id:
-                rig = rig_entry
-        return rig
+                return rig_entry
+        return None
 
     @property
     def device_info(self):
         """Information about this entity/device."""
         rig = self.get_rig()
+        rig_name = resolve_rig_name(rig)
         return {
             "identifiers": {(DOMAIN, self._rig_id)},
             # If desired, the name for the device could be different to the entity
-            "name": rig.get("name"),
-            "sw_version": rig.get("softwareVersions"),
-            "model": rig.get("softwareVersions"),
+            "name": rig_name,
+            "sw_version": rig.get("softwareVersions") if rig else None,
+            "model": rig.get("softwareVersions") if rig else None,
             "manufacturer": "NiceHash",
         }
 
@@ -262,22 +266,27 @@ class NiceHashRigSensor(NiceHashSensor):
     @property
     def name(self):
         rig = self.get_rig()
-        if rig is not None:
-            name = f"NH - {rig.get('name')} - {self._info_type}"
-            if self._convert:
-                return f"{name} - {self._fiat}"
-            return name
-        return None
+        rig_name = resolve_rig_name(rig) or (rig.get("rigId") if rig else self._rig_id)
+        name = f"NH - {rig_name} - {self._info_type}"
+        if self._convert:
+            return f"{name} - {self._fiat}"
+        return name
 
     @property
     def state(self):
         """State of the sensor."""
+        rig = self.get_rig()
+        if rig is None:
+            return None
+        value = rig.get(self._info_type)
+        if value is None:
+            return None
         if self._convert and self._info.get("unit", None) == "BTC":
-            return (
-                self.get_rig()[self._info_type]
-                * self.coordinator.data[ACCOUNT_OBJ]["currencies"][0].get("fiatRate",0)
+            fiat_rate = self.coordinator.data[ACCOUNT_OBJ]["currencies"][0].get(
+                "fiatRate", 0
             )
-        return self.get_rig()[self._info_type]
+            return value * fiat_rate
+        return value
 
 
 class NiceHashRigStatSensor(NiceHashSensor):
@@ -297,29 +306,37 @@ class NiceHashRigStatSensor(NiceHashSensor):
     @property
     def name(self):
         rig = self.get_rig()
-        if rig is not None:
-            name = f"NH - {rig.get('name')} - {self._alg} - {self._info_type}"
-            if self._convert:
-                return f"{name} - {self._fiat}"
-            return name
-        return None
+        rig_name = resolve_rig_name(rig) or (rig.get("rigId") if rig else self._rig_id)
+        name = f"NH - {rig_name} - {self._alg} - {self._info_type}"
+        if self._convert:
+            return f"{name} - {self._fiat}"
+        return name
 
     def get_alg(self):
         """Return the stat object."""
         rig = self.get_rig()
-        alg = None
-        if rig is not None:
-            for stat in rig.get("stats", []):
-                is_mining = False
-                for dev in rig.get("devices", []):
-                    for speed in dev.get("speeds", []):
-                        if speed.get("algorithm") == self._alg:
-                            is_mining = True
-                if is_mining:
-                    algo = stat.get("algorithm")
-                    if algo and algo.get("enumName") == self._alg:
-                        alg = stat
-        return alg
+        if rig is None:
+            return None
+
+        def _match_algorithm(stat_entry):
+            algo = stat_entry.get("algorithm")
+            if isinstance(algo, dict):
+                return algo.get("enumName") == self._alg
+            return algo == self._alg
+
+        # Primary path: stats already contain the data we need.
+        for stat in rig.get("stats", []):
+            if _match_algorithm(stat):
+                return stat
+
+        # Legacy fallback: derive from device speeds in case stats array lacks enumName data.
+        for stat in rig.get("stats", []):
+            for dev in rig.get("devices", []):
+                for speed in dev.get("speeds", []):
+                    if speed.get("algorithm") == self._alg and _match_algorithm(stat):
+                        return stat
+
+        return None
 
     @property
     def state(self):
@@ -329,7 +346,7 @@ class NiceHashRigStatSensor(NiceHashSensor):
             if self._convert:
                 return (
                     alg.get(self._info_type)
-                    * self.coordinator.data[ACCOUNT_OBJ]["currencies"][0].get("fiatRate",0)
+                    * self.coordinator.data[ACCOUNT_OBJ]["currencies"][0].get("fiatRate", 0)
                 )
             return alg.get(self._info_type)
         return None
